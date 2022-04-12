@@ -28,6 +28,7 @@ except ImportError:
 
 class SlackRoom(Room):
     def __init__(self, webclient=None, name=None, channelid=None, bot=None):
+        log.debug('Debug Room initialization')
         if channelid is not None and name is not None:
             raise ValueError("channelid and name are mutually exclusive")
         if channelid is None and name is None:
@@ -38,11 +39,17 @@ class SlackRoom(Room):
         self._cache = None
 
         if name is not None:
-            if name.startswith("#"):
+            if '|' in name:
+                # means it has id and brackets <>
+                self._name = name.split('|')[-1][:-1]
+            elif name.startswith("#"):
                 self._name = name[1:]
             else:
                 self._name = name
-            channelid = self._channelname_to_id(name)
+            try:
+                channelid = self._channelname_to_id(self._name)
+            except RoomDoesNotExistError:
+                log.info(f"Room does not exists")
 
         if channelid is not None:
             self._cache_channel_info(channelid)
@@ -70,7 +77,8 @@ class SlackRoom(Room):
 
             if res["ok"] is True:
                 for channel in res["channels"]:
-                    if channel["name"] == name:
+                    log.debug(f"Compare {channel.get('name')} == {name}")
+                    if channel.get("name") == name:
                         channel_id = channel["id"]
                         break
                 else:
@@ -158,8 +166,21 @@ class SlackRoom(Room):
                 log.info(f"Creating private conversation {self}.")
                 self._bot.slack_web.conversations_create(name=self.name, is_private=True)
             else:
-                log.info(f"Creating conversation {self}.")
-                self._bot.slack_web.conversations_create(name=self.name)
+                # log.info(f"Creating conversation {self}.")
+                log.info(f"Creating conversation {self._name}.")
+                res = self._bot.slack_web.conversations_create(name=self._name)
+                if res["ok"] is True:
+                    channel = res["channel"]
+                    self._cache = {
+                        "id": channel["id"],
+                        "name": channel["name"],
+                        "topic": channel["topic"]["value"],
+                        "purpose": channel["purpose"]["value"],
+                        "is_private": channel.get("is_private", None),
+                        "is_im": channel.get("is_im", None),
+                        "is_mpim": channel.get("is_mpim", None),
+                    }
+
         except SlackAPIResponseError as e:
             if e.error == "user_is_bot":
                 raise RoomError(f"Unable to create channel. {USER_IS_BOT_HELPTEXT}")
@@ -169,7 +190,7 @@ class SlackRoom(Room):
     def destroy(self):
         try:
             log.info(f"Archiving conversation {self} ({self.id})")
-            self._bot.slack_web.conversations_archive(self.id)
+            self._bot.slack_web.conversations_archive(channel=self.id)
         except SlackAPIResponseError as e:
             if e.error == "user_is_bot":
                 raise RoomError(f"Unable to archive channel. {USER_IS_BOT_HELPTEXT}")
@@ -249,7 +270,7 @@ class SlackRoom(Room):
             method = "conversations.invite"
             response = self._bot.api_call(
                 method,
-                data={"channel": self.id, "user": users[user]},
+                data={"json": {"channel": self.id, "users": users[user]}},
                 raise_errors=False,
             )
 
