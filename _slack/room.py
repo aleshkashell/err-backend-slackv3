@@ -27,6 +27,8 @@ except ImportError:
 
 
 class SlackRoom(Room):
+    _exists = True
+
     def __init__(self, webclient=None, name=None, channelid=None, bot=None):
         log.debug('Debug Room initialization')
         if channelid is not None and name is not None:
@@ -50,12 +52,17 @@ class SlackRoom(Room):
                 channelid = self._channelname_to_id(self._name)
             except RoomDoesNotExistError:
                 log.info(f"Room does not exists")
+                self._exists = False
 
         if channelid is not None:
             self._cache_channel_info(channelid)
 
     def __str__(self):
         return f"<#{self.id}|{self.name}>"
+
+    @property
+    def exists(self):
+        return self._exists
 
     @property
     def channelname(self):
