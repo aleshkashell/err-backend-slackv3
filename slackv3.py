@@ -57,7 +57,6 @@ from _slack.lib import (
 from _slack.markdown import slack_markdown_converter
 from _slack.person import SlackPerson
 from _slack.room import SlackBot, SlackRoom, SlackRoomBot, SlackRoomOccupant
-from _slack.card import SlackCard
 
 class SlackBackend(ErrBot):
     def __init__(self, config):
@@ -835,6 +834,13 @@ class SlackBackend(ErrBot):
         return stream
 
     def send_button(self, msg, attachments, body_text=None):
+        """
+        Send attachments with buttons
+
+        :param msg:
+        :param attachments: attachment for slack api
+        :param body_text: text message
+        """
         to_humanreadable, to_channel_id = self._prepare_message(msg)
 
         if body_text:
