@@ -834,20 +834,20 @@ class SlackBackend(ErrBot):
         self.thread_pool.apply_async(self._slack_upload, (stream,))
         return stream
 
-    def send_button(self, msg, attachment, body_text=None):
+    def send_button(self, msg, attachments, body_text=None):
         to_humanreadable, to_channel_id = self._prepare_message(msg)
 
         if body_text:
             parts = self.prepare_message_body(body_text, self.message_size_limit)
             part_count = len(parts)
-            footer = attachment.get("footer", "")
+            # footer = attachment.get("footer", "")
             for i in range(part_count):
-                if part_count > 1:
-                    attachment["footer"] = f"{footer} [{i + 1}/{part_count}]"
-                attachment["text"] = parts[i]
+                # if part_count > 1:
+                #     attachment["footer"] = f"{footer} [{i + 1}/{part_count}]"
+                # attachment["text"] = parts[i]
                 data = {
                     "channel": to_channel_id,
-                    "attachments": json.dumps([attachment]),
+                    "attachments": json.dumps(attachments),
                     "link_names": "1",
                     "as_user": "true",
                 }
@@ -856,12 +856,12 @@ class SlackBackend(ErrBot):
                     self.slack_web.chat_postMessage(**data)
                 except Exception:
                     log.exception(
-                        f"An exception occurred while trying to send a card to {to_humanreadable}.[{attachment}]"
+                        f"An exception occurred while trying to send a card to {to_humanreadable}.{attachments}"
                     )
         else:
             data = {
                 "channel": to_channel_id,
-                "attachments": json.dumps([attachment]),
+                "attachments": json.dumps(attachments),
                 "link_names": "1",
                 "as_user": "true",
             }
@@ -870,7 +870,7 @@ class SlackBackend(ErrBot):
                 self.slack_web.chat_postMessage(**data)
             except Exception:
                 log.exception(
-                    f"An exception occurred while trying to send a card to {to_humanreadable}.[{attachment}]"
+                    f"An exception occurred while trying to send a card to {to_humanreadable}.{attachments}"
                 )
 
     def send_card(self, card: Card):
