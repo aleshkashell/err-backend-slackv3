@@ -6,7 +6,7 @@ import re
 import sys
 import threading
 from functools import lru_cache
-from typing import BinaryIO
+from typing import BinaryIO, Optional
 
 from errbot.backends.base import (
     AWAY,
@@ -57,7 +57,6 @@ from _slack.lib import (
 from _slack.markdown import slack_markdown_converter
 from _slack.person import SlackPerson
 from _slack.room import SlackBot, SlackRoom, SlackRoomBot, SlackRoomOccupant
-
 
 class SlackBackend(ErrBot):
     def __init__(self, config):
@@ -354,9 +353,11 @@ class SlackBackend(ErrBot):
     def _generic_wrapper(self, event_data):
         """Calls the event handler based on the event type"""
         log.debug("Received event: {}".format(str(event_data)))
-        event = event_data["event"]
+        try:
+            event = event_data["event"]
+        except KeyError:
+            event = event_data
         event_type = event["type"]
-
         try:
             event_handler = getattr(self, f"_handle_{event_type}")
             return event_handler(self.slack_web, event)
@@ -460,6 +461,52 @@ class SlackBackend(ErrBot):
         )
 
         self.callback_reaction(reaction)
+
+    def _handle_interactive_message(self, webclient: WebClient, event):
+        """Event handler for the 'interactive_message' event"""
+        log.debug(f"Interactive event: {event}")
+        channel = event["channel"]['id']
+        if channel[0] not in "CGD":
+            log.warning(f"Unknown message type! Unable to handle {channel}")
+            return
+        user = event["user"]["id"]
+        msg = Message(
+            "",
+            extras={
+                "button_pressed": True,
+                # "slack_event": event,
+                "attachment_id": event.get("attachment_id"),
+                "callback_id": event.get("callback_id"),
+                "actions": event.get("actions"),
+                "original_message": event.get("original_message"),
+                "channel_id": channel,
+                'url': event.get('response_url')
+            },
+        )
+        if channel.startswith("D"):
+            if user == self.bot_identifier.userid:
+                msg.frm = self.bot_identifier
+                msg.to = event.get('response_url')
+            else:
+                msg.frm = SlackPerson(webclient, user, channel)
+                msg.to = msg.frm
+            # msg.extras["url"] = (
+            #     f"https://{msg.frm.domain}.slack.com/archives/"
+            #     f'{channel}/p{event["message_ts"].replace(".", "")}'
+            # )
+        else:
+            if user == self.bot_identifier.userid:
+                msg.frm = self.bot_identifier
+                msg.to = event.get('response_url')
+            else:
+                msg.to = SlackRoom(webclient=webclient, channelid=channel, bot=self)
+                msg.frm = SlackRoomOccupant(webclient, user, channel, self)
+
+        flow, _ = self.flow_executor.check_inflight_flow_triggered(msg.extras['callback_id'], msg.frm)
+        if flow:
+            log.debug("Reattach context from flow %s to the message", flow._root.name)
+            msg.ctx = flow.ctx
+        self.callback_message(msg)
 
     def _handle_message(self, webclient: WebClient, event):
         """Event handler for the 'message' event"""
@@ -785,6 +832,52 @@ class SlackBackend(ErrBot):
         )
         self.thread_pool.apply_async(self._slack_upload, (stream,))
         return stream
+
+    def send_button(self, msg, attachments, body_text=None):
+        """
+        Send attachments with buttons
+
+        :param msg:
+        :param attachments: attachment for slack api
+        :param body_text: text message
+        """
+        to_humanreadable, to_channel_id = self._prepare_message(msg)
+
+        if body_text:
+            parts = self.prepare_message_body(body_text, self.message_size_limit)
+            part_count = len(parts)
+            # footer = attachment.get("footer", "")
+            for i in range(part_count):
+                # if part_count > 1:
+                #     attachment["footer"] = f"{footer} [{i + 1}/{part_count}]"
+                # attachment["text"] = parts[i]
+                data = {
+                    "channel": to_channel_id,
+                    "attachments": json.dumps(attachments),
+                    "link_names": "1",
+                    "as_user": "true",
+                }
+                try:
+                    log.debug(f"Sending data:\n{data}")
+                    self.slack_web.chat_postMessage(**data)
+                except Exception:
+                    log.exception(
+                        f"An exception occurred while trying to send a card to {to_humanreadable}.{attachments}"
+                    )
+        else:
+            data = {
+                "channel": to_channel_id,
+                "attachments": json.dumps(attachments),
+                "link_names": "1",
+                "as_user": "true",
+            }
+            try:
+                log.debug(f"Sending data:\n{data}")
+                self.slack_web.chat_postMessage(**data)
+            except Exception:
+                log.exception(
+                    f"An exception occurred while trying to send a card to {to_humanreadable}.{attachments}"
+                )
 
     def send_card(self, card: Card):
         if isinstance(card.to, RoomOccupant):
